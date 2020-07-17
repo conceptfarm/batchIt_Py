@@ -428,6 +428,18 @@ class MainWindow(QMainWindow):
 			tempItem.setToolTip(file)
 			listObject.addItem(tempItem)
 
+	#TODO: write config writer function
+	#write to config every time a directory is chosen
+
+	def writeToConfig(self, setting, key, value):
+		#config = configparser.ConfigParser()
+		config.read('batchItPy.ini')
+		config.set(setting, key, value)
+		
+		with open('batchItPy.ini', 'w') as configfile:
+			config.write(configfile)
+
+
 	###################
 	# ACTION EVENTS
 	###################
@@ -442,8 +454,7 @@ class MainWindow(QMainWindow):
 
 	@pyqtSlot()
 	def on_scriptDir_btn_clicked(self):
-		#QFileDialog(parent, caption = QString(), QString &directory, QString &filter = QString())
-		defaultDir = self.msFilePath if self.msFilePath != '' else QDir.home().dirName()
+		defaultDir = self.scriptDir_txt.text() if self.scriptDir_txt.text() != '' else QDir.home().dirName()
 		dirPath = QFileDialog.getExistingDirectory(self, 'Select a directory', defaultDir, QFileDialog.ShowDirsOnly)
 		
 		self.scriptFiles_list.clear()
@@ -453,15 +464,17 @@ class MainWindow(QMainWindow):
 			
 			it = QDirIterator(dirPath, ['*.ms'],  QDir.Files, QDirIterator.NoIteratorFlags)
 			self.populateList(self.scriptFiles_list, it)
+			self.writeToConfig('batchItSettings', 'msFilePath', dirPath)
 
 
 	@pyqtSlot()
 	def on_maxFilesDir_btn_clicked(self):
-		defaultDir = self.maxFilePath if self.maxFilePath != '' else QDir.home().dirName()
+		defaultDir = self.maxFilesDir_txt.text() if self.maxFilesDir_txt.text() != '' else QDir.home().dirName()
 		dirPath = QFileDialog.getExistingDirectory(self, 'Select a directory',defaultDir, QFileDialog.ShowDirsOnly)
 		
 		if dirPath:
 			self.maxFilesDir_txt.setText(dirPath)
+			self.writeToConfig('batchItSettings', 'maxFilePath', dirPath)
 
 	@pyqtSlot()
 	def on_maxFilesGet_btn_clicked(self):
@@ -574,7 +587,6 @@ if __name__ == '__main__':
 	try:
 		msFilePath = (config['batchItSettings']['msFilePath'])
 		maxFilePath = (config['batchItSettings']['maxFilePath'])
-		print(msFilePath)
 	except:
 		pass
 
