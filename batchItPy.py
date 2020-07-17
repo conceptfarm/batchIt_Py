@@ -2,14 +2,77 @@
 
 import sys
 import os
+import traceback
+import configparser
 
 from PyQt5.QtCore import *
 from PyQt5.QtGui import *
 from PyQt5.QtWidgets import *
 
+from batchItConfigDialogClass import BatchItConfigDialog
+
+class WorkerSignals(QObject):
+
+	finished = pyqtSignal()
+	error = pyqtSignal(tuple)
+	result = pyqtSignal(object)
+	progressTuple = pyqtSignal(tuple)
+	progressInt = pyqtSignal(int)
+	progressNone = pyqtSignal()
+
+class Worker(QRunnable):
+
+	def __init__(self, fn, progressType=None, *args, **kwargs):
+		super(Worker, self).__init__()
+
+		# Store constructor arguments (re-used for processing)
+		self.fn = fn
+		self.args = args
+		self.kwargs = kwargs
+		self.signals = WorkerSignals()	
+		#self.nameFrom = nameFrom
+		#self.index = index
+		
+		# Add the callback to our kwargs
+		self.kwargs['progress_callback'] = None
+		if progressType == 'tuple':
+			self.kwargs['progress_callback'] = self.signals.progressTuple
+		elif progressType == 'int':
+			self.kwargs['progress_callback'] = self.signals.progressInt
+		elif progressType == None:
+			self.kwargs['progress_callback'] = self.signals.progressNone
+		
+
+	@pyqtSlot()
+	def run(self):
+		'''
+		Initialise the runner function with passed args, kwargs.
+		'''
+		
+		# Retrieve args/kwargs here; and fire processing using them
+		try:
+			#result = self.fn(self.fileList, self.size, self.i, *self.args, **self.kwargs)
+			result = self.fn(*self.args, **self.kwargs)
+		except:
+			traceback.print_exc()
+			exctype, value = sys.exc_info()[:2]
+			self.signals.error.emit((exctype, value, traceback.format_exc()))
+		else:
+			self.signals.result.emit(result)  # Return the result of the processing
+		finally:
+			self.signals.finished.emit()  # Done
+
+
 class MainWindow(QMainWindow):
-	def __init__(self):
+	def __init__(self, msFilePath, maxFilePath, maxPaths):
 		super().__init__()
+		self.msFilePath = msFilePath
+		self.maxFilePath = maxFilePath
+		self.maxPaths = maxPaths
+
+		self.threadpool = QThreadPool().globalInstance()
+		self.threadpool.setMaxThreadCount(1)
+		self.maxBatchExec = '"C:\\Program Files\\Autodesk\\3ds Max 2020\\3dsmaxbatch.exe"'
 		self.setupUi(self)
 
 	def setupUi(self, MainWindow):
@@ -45,7 +108,7 @@ class MainWindow(QMainWindow):
 		self.scriptDir_btn.setMaximumSize(QSize(40, 16777215))
 		self.scriptDir_btn.setObjectName('scriptDir_btn')
 		
-		self.scriptDir_txt = QLineEdit(self.centralwidget)
+		self.scriptDir_txt = QLineEdit(self.msFilePath, self.centralwidget)
 		sizePolicy = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 		sizePolicy.setHorizontalStretch(1)
 		sizePolicy.setVerticalStretch(0)
@@ -75,7 +138,7 @@ class MainWindow(QMainWindow):
 		self.processDir_gl.setSpacing(6)
 		self.processDir_gl.setObjectName('processDir_gl')
 		
-		self.maxFilesDir_txt = QLineEdit(self.centralwidget)
+		self.maxFilesDir_txt = QLineEdit(self.maxFilePath, self.centralwidget)
 		sizePolicy = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 		sizePolicy.setHorizontalStretch(1)
 		sizePolicy.setVerticalStretch(0)
@@ -245,13 +308,12 @@ class MainWindow(QMainWindow):
 		self.processMaxVer_dd.setMinimumSize(QSize(80, 22))
 		self.processMaxVer_dd.setMaximumSize(QSize(100, 16777215))
 		self.processMaxVer_dd.setEditable(False)
-		self.processMaxVer_dd.setCurrentText('2016')
+		self.processMaxVer_dd.setCurrentText('2018')
 		self.processMaxVer_dd.setObjectName('processMaxVer_dd')
-		self.processMaxVer_dd.addItem('')
-		self.processMaxVer_dd.addItem('')
-		self.processMaxVer_dd.addItem('')
-		self.processMaxVer_dd.addItem('')
-		self.processMaxVer_dd.addItem('')
+		
+		for key, value in self.maxPaths.items():  
+			if value != '' : self.processMaxVer_dd.addItem(key)
+
 
 		self.processMaxVer_lbl = QLabel(self.centralwidget)
 		self.processMaxVer_lbl.setMaximumSize(QSize(80, 16777215))
@@ -320,6 +382,11 @@ class MainWindow(QMainWindow):
 		QMetaObject.connectSlotsByName(MainWindow)
 		
 		self.retranslateUi(MainWindow)
+		
+		if self.msFilePath != '':
+			it = QDirIterator(self.msFilePath, ['*.ms'],  QDir.Files, QDirIterator.NoIteratorFlags)
+			self.populateList(self.scriptFiles_list, it)
+
 		self.show()
 
 	def retranslateUi(self, MainWindow):
@@ -344,17 +411,23 @@ class MainWindow(QMainWindow):
 		self.maxFilesRecursive_chb.setText('Recursive')
 		self.processDontSave_chb.setText('Don\'t Save File')
 		self.processOverwrite_chb.setText('Overwrite File on Save')
-		
-		self.processMaxVer_dd.setItemText(0, '2016')
-		self.processMaxVer_dd.setItemText(1, '2017')
-		self.processMaxVer_dd.setItemText(2, '2018')
-		self.processMaxVer_dd.setItemText(3, '2019')
-		self.processMaxVer_dd.setItemText(4, '2020')
-		
+				
 		self.menuPreferences.setTitle('Preferences')
 		self.actionDo_Something.setText('Do Something')
 		self.actionDo_Another_thing.setText('Do Another thing')
 	
+	
+	###################
+	# FUNCTIONS
+	###################
+
+	def populateList(self, listObject, items):
+		while items.hasNext():
+			file = items.next()
+			tempItem = QListWidgetItem(os.path.basename(file))
+			tempItem.setToolTip(file)
+			listObject.addItem(tempItem)
+
 	###################
 	# ACTION EVENTS
 	###################
@@ -370,7 +443,8 @@ class MainWindow(QMainWindow):
 	@pyqtSlot()
 	def on_scriptDir_btn_clicked(self):
 		#QFileDialog(parent, caption = QString(), QString &directory, QString &filter = QString())
-		dirPath = QFileDialog.getExistingDirectory(self, 'Select a directory', QDir.home().dirName(), QFileDialog.ShowDirsOnly)
+		defaultDir = self.msFilePath if self.msFilePath != '' else QDir.home().dirName()
+		dirPath = QFileDialog.getExistingDirectory(self, 'Select a directory', defaultDir, QFileDialog.ShowDirsOnly)
 		
 		self.scriptFiles_list.clear()
 		
@@ -378,16 +452,13 @@ class MainWindow(QMainWindow):
 			self.scriptDir_txt.setText(dirPath)
 			
 			it = QDirIterator(dirPath, ['*.ms'],  QDir.Files, QDirIterator.NoIteratorFlags)
-			while it.hasNext():
-				file = it.next()
-				tempItem = QListWidgetItem(os.path.basename(file))
-				tempItem.setToolTip(file)
-				self.scriptFiles_list.addItem(tempItem)
+			self.populateList(self.scriptFiles_list, it)
 
 
 	@pyqtSlot()
 	def on_maxFilesDir_btn_clicked(self):
-		dirPath = QFileDialog.getExistingDirectory(self, 'Select a directory', QDir.home().dirName(), QFileDialog.ShowDirsOnly)
+		defaultDir = self.maxFilePath if self.maxFilePath != '' else QDir.home().dirName()
+		dirPath = QFileDialog.getExistingDirectory(self, 'Select a directory',defaultDir, QFileDialog.ShowDirsOnly)
 		
 		if dirPath:
 			self.maxFilesDir_txt.setText(dirPath)
@@ -402,12 +473,8 @@ class MainWindow(QMainWindow):
 		else:
 			it = QDirIterator(dirPath, ['*.max'],  QDir.Files, QDirIterator.NoIteratorFlags)
 		
-		while it.hasNext():
-			file = it.next()
+		self.populateList(self.maxFiles_list, it)
 
-			tempItem = QListWidgetItem(os.path.basename(file))
-			tempItem.setToolTip(file)
-			self.maxFiles_list.addItem(tempItem)
 
 	@pyqtSlot()
 	def on_maxFilesSelectNone_btn_clicked(self):
@@ -425,11 +492,34 @@ class MainWindow(QMainWindow):
 		if dirPath:
 			self.saveMaxFileDir_txt.setText(dirPath)
 
+	@pyqtSlot()	
+	def workerFinished(self):
+		self.progress_pb.setValue(self.progress_pb.value() + 1)
+
+	def nothing(self):
+		print('nothing')
+
+	def maxBatchProcess(self, maxFile, msFile, maxExecPath, progress_callback):
+		fString = maxExecPath + ' ' + msFile + ' -sceneFile ' + maxFile
+		#subprocess.Popen(fString)
+		print(fString)
+		return fString
+
 	@pyqtSlot()
 	def on_process_btn_clicked(self):
-		print('click')
+		self.progress_pb.setMaximum(len(self.maxFiles_list.selectedItems()))
 
-	
+		for f in self.maxFiles_list.selectedItems():
+			maxFilePath = f.toolTip()
+			msFilePath = self.scriptFiles_list.currentItem().toolTip()
+			maxExecPath = self.maxPaths[self.processMaxVer_dd.currentText()]
+			
+			worker = Worker(self.maxBatchProcess, None, maxFilePath, msFilePath, maxExecPath)
+			worker.signals.finished.connect(self.workerFinished)
+			#worker.signals.result.connect(self.nothing)
+			self.threadpool.start(worker)	
+
+
 	###################
 	# TEXT EDIT EVENTS
 	###################
@@ -468,14 +558,41 @@ class MainWindow(QMainWindow):
 
 
 if __name__ == '__main__':
-	import sys
 	app = QApplication(sys.argv)
-	#MainWindow = QMainWindow()
-	#ui = Ui_MainWindow()
-	#ui.setupUi(MainWindow)
-	#MainWindow.show()
-	ex = MainWindow()
-	#app = QApplication(sys.argv)
 	app.setStyle('Fusion')
+	
+	config = configparser.ConfigParser()
+	config.read('batchItPy.ini')
+	configuration = False
 
+	msFilePath = ''
+	maxFilePath = ''
+	maxPaths = ''
+	
+	#appIcon = icons.qIconFromBase64(icons.appIconBase64)
+	
+	try:
+		msFilePath = (config['batchItSettings']['msFilePath'])
+		maxFilePath = (config['batchItSettings']['maxFilePath'])
+		print(msFilePath)
+	except:
+		pass
+
+
+	try:
+		maxPaths = config['3dsMaxPaths']
+		configuration = True
+	except:
+		configDialog = BatchItConfigDialog()
+		var = configDialog.exec()
+		#return 1 if accepted, 0 if rejected
+		if var == 1:
+			maxPaths = {'2018':configDialog.le1.text(),'2019':configDialog.le2.text(),'2020':configDialog.le3.text(),'2021':configDialog.le4.text()}
+			configuration = True
+	
+	if configuration == True:
+		ex = MainWindow(msFilePath,maxFilePath,maxPaths)
+
+
+	#ex = MainWindow()
 	sys.exit(app.exec_())
